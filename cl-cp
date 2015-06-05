@@ -1,10 +1,6 @@
 #!/bin/bash 
 # Copyright 2014 Cumulus Networks, Inc. All rights reserved.
 
-CP='cp -a  --parents '
-DEST='/mnt/persist/'
-
-
 SAVE="
 /root/ 
 /home/ 
@@ -30,14 +26,55 @@ SAVE="
 /usr/share/openvswitch/scripts/ovs-ctl-vtep
 "
 
-for foo in "$SAVE"
-do
-$CP -a $foo $DEST
+CP="cp -af  --parents "
+DEST="/mnt/persist/"
+RCLOCAL=${DEST}etc/rc.local
+
+# Check if sufficient space in /mnt/persist
+needed=$(echo ${SAVE} | xargs du -ksc 2>/dev/null | tail -n1 | awk '{print $1}')
+avail=$(df -k /mnt/persist | tail -n1  | awk '{print $2}')
+if [[ ${needed} -gt ${avail} ]]; then
+	echo "*******************************************************************"
+	echo "Error: space required exceeds total space in /mnt/persist." 
+        echo "Doing nothing."
+	echo "Delete some files or reduce the length of the list of files to copy."
+	echo "Following is the size of files in KB of the largest items in the list"
+	echo
+        echo ${SAVE} | xargs du -k -d1 2>/dev/null | sort -k1nr -s  | head 
+        exit 1
+fi
+
+# Copy files to /mnt/persist/
+for file in ${SAVE}; do
+	${CP} "${file}" "${DEST}" 2>/dev/null
 done
 
-tree $DEST
+# Display the result
+tree -L 4 "${DEST}"
 
-echo "#-----------------------------------------------------------------------"
-echo "  You will forget /mnt/persist and it wil HURT
-echo "  run  /root/bin/fix-persist after reboot to remove files
-echo "#-----------------------------------------------------------------------"
+# Insert fix-persist into /mnt/persist/etc/rc.local if we haven't already
+grep -q FIXPERSIST ${RCLOCAL}
+if [[ $? -ne 0 ]]; then
+	# If last line in rc.local has an "exit 0" on it, insert fix-persist before that
+	# Otherwise, append fix-persist to rc.local
+	linecount=$(wc -l ${RCLOCAL} | cut -d" " -f1)
+	if sed -n ${linecount}p ${RCLOCAL} | grep -v '#' | grep -q exit.0; then
+		sed -i "${linecount}d" ${RCLOCAL}
+		doexit="yes"
+	fi
+	cat >> ${RCLOCAL} << EOF
+# FIXPERSIST
+/bin/rm -rf ${DEST}*
+/bin/mkdir -p ${DEST}etc/cumulus
+/bin/cp -af /etc/cumulus/.license* /mnt/persist/etc/cumulus/
+sed -i '/^# FIXPERSIST$/,/^# ENDFIXPERSIST$/d' /etc/rc.local
+# ENDFIXPERSIST
+EOF
+        if [[ ${doexit} = "yes" ]]; then
+		echo "exit 0" >> ${RCLOCAL}
+        fi
+	echo
+	echo "*******************************************************************"
+	echo "${RCLOCAL} has been modified to wipe all files except the license from ${DEST} after reboot. If rc.local will be replaced by orchestration during reboot it is STRONGLY recommended to manually run /root/bin/fix-persist after reboot to do the same." | fold -sw 70
+	echo "*******************************************************************"
+fi
