@@ -17,8 +17,8 @@ case $2 in
                 kill $(cat /var/run/vrrpd_${1}_*.pid)
                 ;;
         up)     ifquery $1 > $TMPFILE
-                ip addr add $(sed -n "s/^\s*address//p" $TMPFILE) dev $1
-                vrrpd $(sed -n "s/^\s*up vrrpd//p" $TMPFILE)
+                ip addr add $(awk '$1=="address" && ! /:/ {print $NF}' $TMPFILE) dev $1
+                vrrpd $(sed -n "s/^\s*post-up vrrpd//p" $TMPFILE)
                 rm -f $TMPFILE
                 ;;
 esac
